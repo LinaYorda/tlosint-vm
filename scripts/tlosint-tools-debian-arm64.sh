@@ -149,6 +149,7 @@ install_base_packages() {
     whiptail zenity chromium nodejs npm firefox-esr
     steghide stegseek stegosuite
     translate-shell
+    httrack yt-dlp instaloader
   )
   local p
   for p in "${pkgs[@]}"; do
@@ -177,30 +178,30 @@ setup_sn0int_repo() {
 # ---------- Python / Go / Rust env setup ----------
 setup_python_envs() {
   log "[*] pip/pipx PATH for target user"
-  run "${SUDO} -u \"$TARGET_USER\" bash -lc 'for f in \"\$HOME/.profile\" \"\$HOME/.bashrc\"; do grep -qxF \"export PATH=\\\"\\\$HOME/.local/bin:\\\$PATH\\\"\" \"\$f\" 2>/dev/null || echo \"export PATH=\\\"\\\$HOME/.local/bin:\\\$PATH\\\"\" >> \"\$f\"; done'"
-  run "${SUDO} -u \"$TARGET_USER\" python3 -m ensurepip --upgrade || true"
-  run "${SUDO} -u \"$TARGET_USER\" python3 -m pip install --user -U pip wheel setuptools || true"
-  run "${SUDO} -u \"$TARGET_USER\" pipx ensurepath || true"
+  run "sudo -u \"$TARGET_USER\" bash -lc 'for f in \"\$HOME/.profile\" \"\$HOME/.bashrc\"; do grep -qxF \"export PATH=\\\"\\\$HOME/.local/bin:\\\$PATH\\\"\" \"\$f\" 2>/dev/null || echo \"export PATH=\\\"\\\$HOME/.local/bin:\\\$PATH\\\"\" >> \"\$f\"; done'"
+  run "sudo -u \"$TARGET_USER\" python3 -m ensurepip --upgrade || true"
+  run "sudo -u \"$TARGET_USER\" python3 -m pip install --user -U pip wheel setuptools || true"
+  run "sudo -u \"$TARGET_USER\" pipx ensurepath || true"
 }
 
 setup_go_env() {
   log "[*] Configure Go env (target user)"
-  run "${SUDO} -u \"$TARGET_USER\" bash -lc 'grep -qxF \"export GOPATH=\\\"\\\$HOME/go\\\"\" \"\$HOME/.profile\" 2>/dev/null || echo \"export GOPATH=\\\"\\\$HOME/go\\\"\" >> \"\$HOME/.profile\"'"
-  run "${SUDO} -u \"$TARGET_USER\" bash -lc 'grep -qxF \"export GOBIN=\\\"\\\$GOPATH/bin\\\"\" \"\$HOME/.profile\" 2>/dev/null || echo \"export GOBIN=\\\"\\\$GOPATH/bin\\\"\" >> \"\$HOME/.profile\"'"
-  run "${SUDO} -u \"$TARGET_USER\" bash -lc 'grep -qxF \"export PATH=\\\"\\\$GOBIN:\\\$PATH\\\"\" \"\$HOME/.profile\" 2>/dev/null || echo \"export PATH=\\\"\\\$GOBIN:\\\$PATH\\\"\" >> \"\$HOME/.profile\"'"
-  run "${SUDO} -u \"$TARGET_USER\" mkdir -p \"$TARGET_HOME/go/bin\" \"$TARGET_HOME/go/src\" \"$TARGET_HOME/go/pkg\""
+  run "sudo -u \"$TARGET_USER\" bash -lc 'grep -qxF \"export GOPATH=\\\"\\\$HOME/go\\\"\" \"\$HOME/.profile\" 2>/dev/null || echo \"export GOPATH=\\\"\\\$HOME/go\\\"\" >> \"\$HOME/.profile\"'"
+  run "sudo -u \"$TARGET_USER\" bash -lc 'grep -qxF \"export GOBIN=\\\"\\\$GOPATH/bin\\\"\" \"\$HOME/.profile\" 2>/dev/null || echo \"export GOBIN=\\\"\\\$GOPATH/bin\\\"\" >> \"\$HOME/.profile\"'"
+  run "sudo -u \"$TARGET_USER\" bash -lc 'grep -qxF \"export PATH=\\\"\\\$GOBIN:\\\$PATH\\\"\" \"\$HOME/.profile\" 2>/dev/null || echo \"export PATH=\\\"\\\$GOBIN:\\\$PATH\\\"\" >> \"\$HOME/.profile\"'"
+  run "sudo -u \"$TARGET_USER\" mkdir -p \"$TARGET_HOME/go/bin\" \"$TARGET_HOME/go/src\" \"$TARGET_HOME/go/pkg\""
 }
 
 setup_rust_env() {
   log "[*] Install Rust (rustup) for target user"
-  run "${SUDO} -u \"$TARGET_USER\" bash -lc 'command -v cargo >/dev/null 2>&1 || (curl --proto \"=https\" --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal)'"
-  run "${SUDO} -u \"$TARGET_USER\" bash -lc '[ -f \"\$HOME/.cargo/env\" ] && (grep -qxF \"source \\\"\\\$HOME/.cargo/env\\\"\" \"\$HOME/.profile\" || echo \"source \\\"\\\$HOME/.cargo/env\\\"\" >> \"\$HOME/.profile\")'"
+  run "sudo -u \"$TARGET_USER\" bash -lc 'command -v cargo >/dev/null 2>&1 || (curl --proto \"=https\" --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal)'"
+  run "sudo -u \"$TARGET_USER\" bash -lc '[ -f \"\$HOME/.cargo/env\" ] && (grep -qxF \"source \\\"\\\$HOME/.cargo/env\\\"\" \"\$HOME/.profile\" || echo \"source \\\"\\\$HOME/.cargo/env\\\"\" >> \"\$HOME/.profile\")'"
 }
 
 # ---------- Tool install helpers ----------
 pipx_user_install_or_upgrade() {
   local app="$1" spec="$2"
-  run "${SUDO} -u \"$TARGET_USER\" bash -lc 'if pipx list 2>/dev/null | grep -qi \"^${app}\\b\"; then pipx upgrade ${app} || true; else pipx install \"${spec}\"; fi'"
+  run "sudo -u \"$TARGET_USER\" bash -lc 'if pipx list 2>/dev/null | grep -qi \"^${app}\\b\"; then pipx upgrade ${app} || true; else pipx install \"${spec}\"; fi'"
 }
 
 go_install_if_missing() {
@@ -214,7 +215,7 @@ go_install_if_missing() {
 cargo_install_if_missing() {
   local crate="$1"
   if ! command -v "$crate" >/dev/null 2>&1; then
-    run "${SUDO} -u \"$TARGET_USER\" bash -lc 'cargo install --locked ${crate}'"
+    run "sudo -u \"$TARGET_USER\" bash -lc 'cargo install --locked ${crate}'"
   fi
 }
 
@@ -265,7 +266,7 @@ install_tor_browser_launcher() {
     return 0
   fi
   log "[*] torbrowser-launcher not in Trixie repos; installing via pipx"
-  run "${SUDO} -u \"$TARGET_USER\" bash -lc 'pipx install torbrowser-launcher || true'"
+  run "sudo -u \"$TARGET_USER\" bash -lc 'pipx install torbrowser-launcher || true'"
   if [[ -x "${TARGET_HOME}/.local/bin/torbrowser-launcher" ]]; then
     write_wrapper "/usr/local/bin/torbrowser-launcher" "${TARGET_HOME}/.local/bin/torbrowser-launcher"
     log "[*] torbrowser-launcher installed via pipx"
@@ -430,9 +431,9 @@ ensure_runtime_path_now_plus() {
 
 ensure_rust_cargo_available() {
   log "[*] Ensuring Rust cargo is available + on PATH"
-  run "${SUDO} -u \"$TARGET_USER\" bash -lc 'for f in \"\$HOME/.profile\" \"\$HOME/.bashrc\"; do grep -qxF \"export PATH=\\\"\\\$HOME/.cargo/bin:\\\$PATH\\\"\" \"\$f\" 2>/dev/null || echo \"export PATH=\\\"\\\$HOME/.cargo/bin:\\\$PATH\\\"\" >> \"\$f\"; done'"
+  run "sudo -u \"$TARGET_USER\" bash -lc 'for f in \"\$HOME/.profile\" \"\$HOME/.bashrc\"; do grep -qxF \"export PATH=\\\"\\\$HOME/.cargo/bin:\\\$PATH\\\"\" \"\$f\" 2>/dev/null || echo \"export PATH=\\\"\\\$HOME/.cargo/bin:\\\$PATH\\\"\" >> \"\$f\"; done'"
   if ! command -v cargo >/dev/null 2>&1; then
-    run "${SUDO} -u \"$TARGET_USER\" bash -lc '[ -f \"\$HOME/.cargo/env\" ] && source \"\$HOME/.cargo/env\" || true'"
+    run "sudo -u \"$TARGET_USER\" bash -lc '[ -f \"\$HOME/.cargo/env\" ] && source \"\$HOME/.cargo/env\" || true'"
   fi
   if ! command -v cargo >/dev/null 2>&1; then
     log "[*] cargo missing; attempting APT install"
@@ -454,13 +455,13 @@ ensure_shodan_available() {
     return 0
   fi
 
-  run "${SUDO} -u \"$TARGET_USER\" bash -lc 'command -v pipx >/dev/null 2>&1 || (apt-get install -y pipx 2>/dev/null || python3 -m pip install --user --break-system-packages -U pipx) && pipx ensurepath || true'"
+  run "sudo -u \"$TARGET_USER\" bash -lc 'command -v pipx >/dev/null 2>&1 || (apt-get install -y pipx 2>/dev/null || python3 -m pip install --user --break-system-packages -U pipx) && pipx ensurepath || true'"
   pipx_user_install_or_upgrade "shodan" "shodan"
-  run "${SUDO} -u \"$TARGET_USER\" bash -lc 'pipx runpip shodan install -U \"setuptools>=68\" \"pip>=23\" wheel || true'"
+  run "sudo -u \"$TARGET_USER\" bash -lc 'pipx runpip shodan install -U \"setuptools>=68\" \"pip>=23\" wheel || true'"
 
   if [[ ! -x "${TARGET_HOME}/.local/bin/shodan" ]]; then
     log "[*] pipx shim not found; trying pipx install directly"
-    run "${SUDO} -u \"$TARGET_USER\" bash -lc 'pipx install shodan || true'"
+    run "sudo -u \"$TARGET_USER\" bash -lc 'pipx install shodan || true'"
   fi
 
   ${SUDO} tee /usr/local/bin/shodan >/dev/null <<EOF
@@ -502,7 +503,7 @@ ensure_docker_engine_available() {
 
 maybe_init_shodan() {
   if [[ -n "${SHODAN_API_KEY-}" ]]; then
-    run "${SUDO} -u \"$TARGET_USER\" env SHODAN_API_KEY=\"${SHODAN_API_KEY}\" sh -lc 'shodan init \"$SHODAN_API_KEY\" || true'"
+    run "sudo -u \"$TARGET_USER\" env SHODAN_API_KEY=\"${SHODAN_API_KEY}\" sh -lc 'shodan init \"$SHODAN_API_KEY\" || true'"
   else
     ${SUDO} mkdir -p /etc/osint 2>>"$LOG_FILE" || true
     ${SUDO} bash -lc 'echo "no-api" > /etc/osint/skip-shodan-init' 2>>"$LOG_FILE" || true
@@ -515,7 +516,7 @@ install_tools_from_list() {
 
   # Shodan
   pipx_user_install_or_upgrade "shodan" "shodan"
-  run "${SUDO} -u \"$TARGET_USER\" bash -lc 'pipx runpip shodan install -U \"setuptools>=68\" \"pip>=23\" wheel || true'"
+  run "sudo -u \"$TARGET_USER\" bash -lc 'pipx runpip shodan install -U \"setuptools>=68\" \"pip>=23\" wheel || true'"
 
   # Sherlock
   pipx_user_install_or_upgrade "sherlock" "git+https://github.com/sherlock-project/sherlock.git"
@@ -540,7 +541,7 @@ install_tools_from_list() {
   if ! apt_try_install sn0int; then
     log "[*] sn0int not in apt (apt.vulns.xyz does not support Trixie yet); building via cargo"
     ensure_rust_cargo_available
-    run "${SUDO} -u \"$TARGET_USER\" bash -lc 'source \"\$HOME/.cargo/env\" 2>/dev/null || true; cargo install --locked sn0int'"
+    run "sudo -u \"$TARGET_USER\" bash -lc 'source \"\$HOME/.cargo/env\" 2>/dev/null || true; cargo install --locked sn0int'"
     symlink_if_exists "${TARGET_HOME}/.cargo/bin/sn0int" "sn0int"
     ensure_runtime_path_now_plus
   fi
@@ -553,13 +554,35 @@ install_tools_from_list() {
       write_wrapper "/usr/local/bin/metagoofil" "${TARGET_HOME}/.local/bin/metagoofil"
     else
       log "[*] metagoofil pipx install failed; retrying with pipx install"
-      run "${SUDO} -u \"$TARGET_USER\" bash -lc 'pipx install git+https://github.com/opsdisk/metagoofil.git || true'"
+      run "sudo -u \"$TARGET_USER\" bash -lc 'pipx install git+https://github.com/opsdisk/metagoofil.git || true'"
       [[ -x "${TARGET_HOME}/.local/bin/metagoofil" ]] && write_wrapper "/usr/local/bin/metagoofil" "${TARGET_HOME}/.local/bin/metagoofil" || logerr "metagoofil install failed"
     fi
   fi
   if ! apt_try_install sublist3r; then
     pipx_user_install_or_upgrade "sublist3r" "git+https://github.com/aboul3la/Sublist3r.git"
   fi
+
+  # theHarvester
+  pipx_user_install_or_upgrade "theHarvester" "theHarvester" || true
+  [[ -x "${TARGET_HOME}/.local/bin/theHarvester" ]] && write_wrapper "/usr/local/bin/theHarvester" "${TARGET_HOME}/.local/bin/theHarvester"
+
+  # h8mail
+  pipx_user_install_or_upgrade "h8mail" "h8mail" || true
+  [[ -x "${TARGET_HOME}/.local/bin/h8mail" ]] && write_wrapper "/usr/local/bin/h8mail" "${TARGET_HOME}/.local/bin/h8mail"
+
+  # OSRFramework (provides domainfy, mailfy, usufy, searchfy, phonefy)
+  pipx_user_install_or_upgrade "osrframework" "osrframework" || true
+  for osrbin in domainfy mailfy usufy searchfy phonefy checkfy; do
+    [[ -x "${TARGET_HOME}/.local/bin/${osrbin}" ]] && write_wrapper "/usr/local/bin/${osrbin}" "${TARGET_HOME}/.local/bin/${osrbin}"
+  done
+
+  # OnionSearch
+  pipx_user_install_or_upgrade "onionsearch" "onionsearch" || true
+  [[ -x "${TARGET_HOME}/.local/bin/onionsearch" ]] && write_wrapper "/usr/local/bin/onionsearch" "${TARGET_HOME}/.local/bin/onionsearch"
+
+  # Photon
+  pipx_user_install_or_upgrade "photon" "git+https://github.com/s0md3v/Photon.git" || true
+  [[ -x "${TARGET_HOME}/.local/bin/photon" ]] && write_wrapper "/usr/local/bin/photon" "${TARGET_HOME}/.local/bin/photon"
 
   # Stego tools (all confirmed available on Trixie ARM64)
   apt_try_install stegosuite || log "[*] StegOSuite not available; skipping."
@@ -733,7 +756,7 @@ JSON
 post_install_checks() {
   log "[*] Post-install sanity checks"
   local missing=()
-  for b in shodan sherlock phoneinfoga sn0int metagoofil sublist3r exiftool tor trans steghide; do
+  for b in shodan sherlock phoneinfoga sn0int metagoofil sublist3r exiftool tor trans steghide theHarvester h8mail httrack yt-dlp instaloader; do
     command -v "$b" >/dev/null 2>&1 || missing+=("$b")
   done
   command -v spiderfoot >/dev/null 2>&1 || command -v sf.py >/dev/null 2>&1 || missing+=("spiderfoot/sf.py")
@@ -873,6 +896,14 @@ validator() {
   show_ver sn0int -V || true
   show_ver metagoofil -h || true
   show_ver sublist3r -h || true
+  show_ver theHarvester -h || true
+  show_ver h8mail -h || true
+  show_ver httrack --version || true
+  show_ver yt-dlp --version || true
+  show_ver instaloader --version || true
+  has domainfy && ok "osrframework present (domainfy: $(command -v domainfy))" || warn "osrframework not found"
+  has onionsearch && ok "onionsearch present" || warn "onionsearch not found"
+  has photon && ok "photon present" || warn "photon not found"
   show_ver exiftool -ver || true
   show_ver steghide --version || true
   show_ver stegseek --version || true
@@ -970,7 +1001,7 @@ main() {
   install_osint_updater
   harden_firefox
 
-  run "${SUDO} -u \"$TARGET_USER\" mkdir -p \"$TARGET_HOME/osint-workspaces\""
+  run "sudo -u \"$TARGET_USER\" mkdir -p \"$TARGET_HOME/osint-workspaces\""
   post_install_checks
   usage_hints
   log "==== Completed. See ${LOG_FILE} for details. ===="
