@@ -536,15 +536,26 @@ install_tools_from_list() {
     fi
   fi
 
-  # sn0int: apt.vulns.xyz → cargo fallback
+  # sn0int: apt.vulns.xyz targets Debian stable (bookworm); on Trixie go straight to cargo
   if ! apt_try_install sn0int; then
-    log "[*] sn0int not available via apt.vulns.xyz on this system; building from cargo"
-    cargo_install_if_missing "sn0int"
+    log "[*] sn0int not in apt (apt.vulns.xyz does not support Trixie yet); building via cargo"
+    ensure_rust_cargo_available
+    run "${SUDO} -u \"$TARGET_USER\" bash -lc 'source \"\$HOME/.cargo/env\" 2>/dev/null || true; cargo install --locked sn0int'"
+    symlink_if_exists "${TARGET_HOME}/.cargo/bin/sn0int" "sn0int"
+    ensure_runtime_path_now_plus
   fi
 
   # Metagoofil / Sublist3r
   if ! apt_try_install metagoofil; then
-    pipx_user_install_or_upgrade "metagoofil" "git+https://github.com/opsdisk/metagoofil.git"
+    pipx_user_install_or_upgrade "metagoofil" "git+https://github.com/opsdisk/metagoofil.git" || true
+    # explicit wrapper in case pipx didn't expose it system-wide
+    if [[ -x "${TARGET_HOME}/.local/bin/metagoofil" ]]; then
+      write_wrapper "/usr/local/bin/metagoofil" "${TARGET_HOME}/.local/bin/metagoofil"
+    else
+      log "[*] metagoofil pipx install failed; trying pip --user fallback"
+      run "${SUDO} -u \"$TARGET_USER\" bash -lc 'pip install --user --break-system-packages git+https://github.com/opsdisk/metagoofil.git || true'"
+      [[ -x "${TARGET_HOME}/.local/bin/metagoofil" ]] && write_wrapper "/usr/local/bin/metagoofil" "${TARGET_HOME}/.local/bin/metagoofil" || logerr "metagoofil install failed"
+    fi
   fi
   if ! apt_try_install sublist3r; then
     pipx_user_install_or_upgrade "sublist3r" "git+https://github.com/aboul3la/Sublist3r.git"
