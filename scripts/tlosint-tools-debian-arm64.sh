@@ -454,13 +454,13 @@ ensure_shodan_available() {
     return 0
   fi
 
-  run "${SUDO} -u \"$TARGET_USER\" bash -lc 'command -v pipx >/dev/null 2>&1 || (python3 -m pip install --user -U pipx && python3 -m pipx ensurepath) || true'"
+  run "${SUDO} -u \"$TARGET_USER\" bash -lc 'command -v pipx >/dev/null 2>&1 || (apt-get install -y pipx 2>/dev/null || python3 -m pip install --user --break-system-packages -U pipx) && pipx ensurepath || true'"
   pipx_user_install_or_upgrade "shodan" "shodan"
   run "${SUDO} -u \"$TARGET_USER\" bash -lc 'pipx runpip shodan install -U \"setuptools>=68\" \"pip>=23\" wheel || true'"
 
   if [[ ! -x "${TARGET_HOME}/.local/bin/shodan" ]]; then
-    log "[*] pipx shim not found; falling back to pip --user"
-    run "${SUDO} -u \"$TARGET_USER\" bash -lc 'python3 -m pip install --user -U shodan || true'"
+    log "[*] pipx shim not found; trying pipx install directly"
+    run "${SUDO} -u \"$TARGET_USER\" bash -lc 'pipx install shodan || true'"
   fi
 
   ${SUDO} tee /usr/local/bin/shodan >/dev/null <<EOF
@@ -552,8 +552,8 @@ install_tools_from_list() {
     if [[ -x "${TARGET_HOME}/.local/bin/metagoofil" ]]; then
       write_wrapper "/usr/local/bin/metagoofil" "${TARGET_HOME}/.local/bin/metagoofil"
     else
-      log "[*] metagoofil pipx install failed; trying pip --user fallback"
-      run "${SUDO} -u \"$TARGET_USER\" bash -lc 'pip install --user --break-system-packages git+https://github.com/opsdisk/metagoofil.git || true'"
+      log "[*] metagoofil pipx install failed; retrying with pipx install"
+      run "${SUDO} -u \"$TARGET_USER\" bash -lc 'pipx install git+https://github.com/opsdisk/metagoofil.git || true'"
       [[ -x "${TARGET_HOME}/.local/bin/metagoofil" ]] && write_wrapper "/usr/local/bin/metagoofil" "${TARGET_HOME}/.local/bin/metagoofil" || logerr "metagoofil install failed"
     fi
   fi
