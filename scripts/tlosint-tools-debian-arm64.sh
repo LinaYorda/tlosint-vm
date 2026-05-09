@@ -145,7 +145,7 @@ install_base_packages() {
     python3 python3-venv python3-pip python3-setuptools python3-dev pipx
     golang-go
     default-jdk maven
-    libimage-exiftool-perl tor
+    libimage-exiftool-perl exifprobe tor
     whiptail zenity chromium nodejs npm firefox-esr
     steghide stegseek stegosuite
     translate-shell
@@ -243,7 +243,11 @@ install_spiderfoot_from_source() {
   run "${SUDO} git clone --depth=1 https://github.com/smicallef/spiderfoot.git \"${dest}\""
   run "${SUDO} python3 -m venv \"${venv}\""
   run "${SUDO} \"${venv}/bin/pip\" -q install --upgrade pip wheel setuptools"
-  [[ -f "${dest}/requirements.txt" ]] && run "${SUDO} \"${venv}/bin/pip\" -q install -r \"${dest}/requirements.txt\""
+  if [[ -f "${dest}/requirements.txt" ]]; then
+    # lxml 4.9.x fails to compile against Python 3.13 — upgrade pin to >=5.0.0
+    run "${SUDO} sed -i 's/^lxml.*/lxml>=5.0.0/' \"${dest}/requirements.txt\" || true"
+    run "${SUDO} \"${venv}/bin/pip\" -q install -r \"${dest}/requirements.txt\""
+  fi
 
   ${SUDO} tee /usr/local/bin/spiderfoot >/dev/null <<EOF
 #!/usr/bin/env bash
@@ -444,42 +448,22 @@ ensure_rust_cargo_available() {
   ensure_runtime_path_now_plus
 }
 
-# ---------- Shodan helpers ----------
+# ---------- Shodan — dedicated venv (Python 3.13 compatible) ----------
+install_shodan_venv() {
+  local dest="/opt/shodan-venv"
+  log "[*] Installing shodan in dedicated venv at ${dest}"
+  run "${SUDO} rm -rf \"${dest}\""
+  run "${SUDO} python3 -m venv \"${dest}\""
+  run "${SUDO} \"${dest}/bin/pip\" install --upgrade pip setuptools wheel"
+  run "${SUDO} \"${dest}/bin/pip\" install shodan"
+  ${SUDO} ln -sf "${dest}/bin/shodan" /usr/local/bin/shodan
+  command -v shodan >/dev/null 2>&1 && log "[*] shodan installed: $(command -v shodan)" || logerr "shodan install failed"
+}
+
 ensure_shodan_available() {
-  log "[*] Ensuring shodan is available on PATH"
-  ensure_runtime_path_now
-  ensure_runtime_path_now_plus
-
-  if command -v shodan >/dev/null 2>&1; then
-    log "[*] shodan already present: $(command -v shodan)"
-    return 0
-  fi
-
-  run "sudo -u \"$TARGET_USER\" bash -lc 'command -v pipx >/dev/null 2>&1 || (apt-get install -y pipx 2>/dev/null || python3 -m pip install --user --break-system-packages -U pipx) && pipx ensurepath || true'"
-  pipx_user_install_or_upgrade "shodan" "shodan"
-  run "sudo -u \"$TARGET_USER\" bash -lc 'pipx runpip shodan install -U \"setuptools>=68\" \"pip>=23\" wheel || true'"
-
-  if [[ ! -x "${TARGET_HOME}/.local/bin/shodan" ]]; then
-    log "[*] pipx shim not found; trying pipx install directly"
-    run "sudo -u \"$TARGET_USER\" bash -lc 'pipx install shodan || true'"
-  fi
-
-  ${SUDO} tee /usr/local/bin/shodan >/dev/null <<EOF
-#!/usr/bin/env bash
-set -euo pipefail
-BIN="${TARGET_HOME}/.local/bin/shodan"
-if [[ -x "\$BIN" ]]; then
-  exec "\$BIN" "\$@"
-fi
-echo "[shodan] Not found at \$BIN"
-echo "Try: python3 -m pip install --user -U shodan  (as ${TARGET_USER})"
-exit 127
-EOF
-  ${SUDO} chmod 0755 /usr/local/bin/shodan
-  ${SUDO} chown root:root /usr/local/bin/shodan
-
-  ensure_runtime_path_now
-  ensure_runtime_path_now_plus
+  log "[*] Ensuring shodan is available"
+  command -v shodan >/dev/null 2>&1 && { log "[*] shodan already present: $(command -v shodan)"; return 0; }
+  install_shodan_venv
   command -v shodan >/dev/null 2>&1 && log "[*] shodan present: $(command -v shodan)" || logerr "shodan still missing after all attempts"
 }
 
@@ -510,13 +494,206 @@ maybe_init_shodan() {
   fi
 }
 
+# ---------- theHarvester — dedicated venv from PyPI ----------
+install_theharvester() {
+  local dest="/opt/theHarvester"
+  local venv="${dest}/venv"
+  log "[*] Installing theHarvester"
+  run "${SUDO} rm -rf \"${dest}\""
+  run "${SUDO} python3 -m venv \"${venv}\""
+  run "${SUDO} \"${venv}/bin/pip\" install --upgrade pip setuptools wheel"
+  if run "${SUDO} \"${venv}/bin/pip\" install theHarvester"; then
+    log "[*] theHarvester installed from PyPI"
+  else
+    log "[*] PyPI install failed; trying git clone"
+    run "${SUDO} git clone --depth=1 https://github.com/laramies/theHarvester.git \"${dest}/src\""
+    local req
+    for req in "${dest}/src/requirements/base.txt" "${dest}/src/requirements.txt"; do
+      [[ -f "$req" ]] && { run "${SUDO} \"${venv}/bin/pip\" install -r \"$req\"" || true; break; }
+    done
+    ([[ -f "${dest}/src/pyproject.toml" ]] || [[ -f "${dest}/src/setup.py" ]]) && \
+      run "${SUDO} \"${venv}/bin/pip\" install -e \"${dest}/src\"" || true
+  fi
+  ${SUDO} tee /usr/local/bin/theHarvester >/dev/null <<EOF
+#!/usr/bin/env bash
+if [[ -x "${venv}/bin/theHarvester" ]]; then
+  exec "${venv}/bin/theHarvester" "\$@"
+fi
+exec "${venv}/bin/python3" -m theHarvester.theHarvester "\$@" 2>/dev/null || \
+  { echo "[theHarvester] Not found"; exit 127; }
+EOF
+  ${SUDO} chmod 0755 /usr/local/bin/theHarvester
+  command -v theHarvester >/dev/null 2>&1 && log "[*] theHarvester installed" || logerr "theHarvester install failed"
+}
+
+# ---------- Photon — git clone + venv (no pyproject.toml) ----------
+install_photon_from_source() {
+  local dest="/opt/photon"
+  local venv="${dest}/venv"
+  log "[*] Installing Photon from source"
+  run "${SUDO} rm -rf \"${dest}\""
+  run "${SUDO} git clone --depth=1 https://github.com/s0md3v/Photon.git \"${dest}\""
+  run "${SUDO} python3 -m venv \"${venv}\""
+  run "${SUDO} \"${venv}/bin/pip\" install --upgrade pip setuptools wheel"
+  [[ -f "${dest}/requirements.txt" ]] && run "${SUDO} \"${venv}/bin/pip\" install -r \"${dest}/requirements.txt\""
+  ${SUDO} tee /usr/local/bin/photon >/dev/null <<EOF
+#!/usr/bin/env bash
+exec "${venv}/bin/python3" "${dest}/photon.py" "\$@"
+EOF
+  ${SUDO} chmod 0755 /usr/local/bin/photon
+  command -v photon >/dev/null 2>&1 && log "[*] Photon installed" || logerr "Photon install failed"
+}
+
+# ---------- DumpsterDiver — git clone + venv ----------
+install_dumpsterdiver() {
+  local dest="/opt/DumpsterDiver"
+  local venv="${dest}/venv"
+  log "[*] Installing DumpsterDiver"
+  run "${SUDO} rm -rf \"${dest}\""
+  run "${SUDO} git clone --depth=1 https://github.com/securing/DumpsterDiver.git \"${dest}\""
+  run "${SUDO} python3 -m venv \"${venv}\""
+  run "${SUDO} \"${venv}/bin/pip\" install --upgrade pip setuptools wheel"
+  [[ -f "${dest}/requirements.txt" ]] && run "${SUDO} \"${venv}/bin/pip\" install -r \"${dest}/requirements.txt\""
+  ${SUDO} tee /usr/local/bin/DumpsterDiver >/dev/null <<EOF
+#!/usr/bin/env bash
+exec "${venv}/bin/python3" "${dest}/DumpsterDiver.py" "\$@"
+EOF
+  ${SUDO} chmod 0755 /usr/local/bin/DumpsterDiver
+  command -v DumpsterDiver >/dev/null 2>&1 && log "[*] DumpsterDiver installed" || logerr "DumpsterDiver install failed"
+}
+
+# ---------- Twayback — pipx from git ----------
+install_twayback() {
+  log "[*] Installing Twayback"
+  pipx_user_install_or_upgrade "twayback" "git+https://github.com/humandecoded/twayback.git" || true
+  if [[ -x "${TARGET_HOME}/.local/bin/twayback" ]]; then
+    write_wrapper "/usr/local/bin/twayback" "${TARGET_HOME}/.local/bin/twayback"
+    log "[*] Twayback installed"
+  else
+    logerr "Twayback install failed"
+  fi
+}
+
+# ---------- Maltego — ARM64 not available ----------
+install_maltego() {
+  log "[*] Maltego: ARM64 Linux package not available — skipping"
+  log "[*] Maltego is amd64-only. Check https://www.maltego.com/downloads/ for ARM64 support."
+}
+
+# ---------- Metagoofil — git clone + venv (pipx has no entry point) ----------
+install_metagoofil() {
+  local dest="/opt/metagoofil"
+  local venv="${dest}/venv"
+  log "[*] Installing metagoofil"
+  if apt_try_install metagoofil; then
+    log "[*] metagoofil installed via apt"
+    return 0
+  fi
+  run "${SUDO} rm -rf \"${dest}\""
+  run "${SUDO} git clone --depth=1 https://github.com/opsdisk/metagoofil.git \"${dest}\""
+  run "${SUDO} python3 -m venv \"${venv}\""
+  run "${SUDO} \"${venv}/bin/pip\" install --upgrade pip setuptools wheel"
+  [[ -f "${dest}/requirements.txt" ]] && run "${SUDO} \"${venv}/bin/pip\" install -r \"${dest}/requirements.txt\""
+  ([[ -f "${dest}/pyproject.toml" ]] || [[ -f "${dest}/setup.py" ]]) && \
+    run "${SUDO} \"${venv}/bin/pip\" install -e \"${dest}\"" || true
+  if [[ -x "${venv}/bin/metagoofil" ]]; then
+    ${SUDO} ln -sf "${venv}/bin/metagoofil" /usr/local/bin/metagoofil
+  else
+    local main="${dest}/metagoofil.py"
+    [[ -f "$main" ]] || main="${dest}/metagoofil/metagoofil.py"
+    ${SUDO} tee /usr/local/bin/metagoofil >/dev/null <<EOF
+#!/usr/bin/env bash
+exec "${venv}/bin/python3" "${main}" "\$@"
+EOF
+    ${SUDO} chmod 0755 /usr/local/bin/metagoofil
+  fi
+  command -v metagoofil >/dev/null 2>&1 && log "[*] metagoofil installed" || logerr "metagoofil install failed"
+}
+
+# ---------- Infoga — git clone + venv (unmaintained since 2018) ----------
+install_infoga() {
+  local dest="/opt/infoga"
+  local venv="${dest}/venv"
+  log "[*] Installing Infoga (unmaintained — may not work)"
+  run "${SUDO} rm -rf \"${dest}\""
+  run "${SUDO} git clone --depth=1 https://github.com/m4ll0k/Infoga.git \"${dest}\"" || {
+    logerr "Infoga repo unavailable — skipping"
+    return 0
+  }
+  run "${SUDO} python3 -m venv \"${venv}\""
+  run "${SUDO} \"${venv}/bin/pip\" install --upgrade pip setuptools wheel"
+  [[ -f "${dest}/requirements.txt" ]] && run "${SUDO} \"${venv}/bin/pip\" install -r \"${dest}/requirements.txt\"" || true
+  ${SUDO} tee /usr/local/bin/infoga >/dev/null <<EOF
+#!/usr/bin/env bash
+exec "${venv}/bin/python3" "${dest}/infoga.py" "\$@"
+EOF
+  ${SUDO} chmod 0755 /usr/local/bin/infoga
+  command -v infoga >/dev/null 2>&1 && log "[*] Infoga installed (unmaintained — use at own risk)" || logerr "Infoga install failed"
+}
+
+# ---------- Joplin — AppImage install for TARGET_USER ----------
+install_joplin() {
+  log "[*] Installing Joplin for ${TARGET_USER}"
+  run "sudo -u \"$TARGET_USER\" bash -lc 'wget -qO - https://raw.githubusercontent.com/laurent22/joplin/dev/Joplin_install_and_update.sh | bash' || true"
+  local joplin_bin="${TARGET_HOME}/.joplin/Joplin.AppImage"
+  if [[ -f "$joplin_bin" ]]; then
+    ${SUDO} tee /usr/local/bin/joplin >/dev/null <<EOF
+#!/usr/bin/env bash
+exec "${joplin_bin}" "\$@"
+EOF
+    ${SUDO} chmod 0755 /usr/local/bin/joplin
+    log "[*] Joplin installed: ${joplin_bin}"
+  else
+    logerr "Joplin AppImage not found after install attempt"
+  fi
+}
+
+# ---------- Little Brother — git clone + venv (archived) ----------
+install_little_brother() {
+  local dest="/opt/little-brother"
+  local venv="${dest}/venv"
+  log "[*] Installing Little Brother (archived — may not work)"
+  run "${SUDO} rm -rf \"${dest}\""
+  run "${SUDO} git clone --depth=1 https://github.com/lulz3xploit/LittleBrother.git \"${dest}\"" || {
+    logerr "Little Brother repo unavailable (archived/deleted) — skipping"
+    return 0
+  }
+  run "${SUDO} python3 -m venv \"${venv}\""
+  run "${SUDO} \"${venv}/bin/pip\" install --upgrade pip setuptools wheel"
+  [[ -f "${dest}/requirements.txt" ]] && run "${SUDO} \"${venv}/bin/pip\" install -r \"${dest}/requirements.txt\"" || true
+  ${SUDO} tee /usr/local/bin/littlebrother >/dev/null <<EOF
+#!/usr/bin/env bash
+exec "${venv}/bin/python3" "${dest}/LittleBrother.py" "\$@"
+EOF
+  ${SUDO} chmod 0755 /usr/local/bin/littlebrother
+  command -v littlebrother >/dev/null 2>&1 && log "[*] Little Brother installed (archived)" || logerr "Little Brother install failed"
+}
+
+# ---------- Twint — pipx (archived, Twitter/X API broken) ----------
+install_twint() {
+  log "[*] Installing Twint (archived — will not work with current Twitter/X API)"
+  pipx_user_install_or_upgrade "twint" "git+https://github.com/twintproject/twint.git@origin/master#egg=twint" || \
+    pipx_user_install_or_upgrade "twint" "twint" || true
+  [[ -x "${TARGET_HOME}/.local/bin/twint" ]] && \
+    write_wrapper "/usr/local/bin/twint" "${TARGET_HOME}/.local/bin/twint" || \
+    logerr "Twint install failed (archived)"
+}
+
+# ---------- Stweet — pipx (archived) ----------
+install_stweet() {
+  log "[*] Installing Stweet (archived — may not work)"
+  pipx_user_install_or_upgrade "stweet" "stweet" || true
+  [[ -x "${TARGET_HOME}/.local/bin/stweet" ]] && \
+    write_wrapper "/usr/local/bin/stweet" "${TARGET_HOME}/.local/bin/stweet" || \
+    logerr "Stweet install failed (archived)"
+}
+
 # ---------- Install all OSINT tools ----------
 install_tools_from_list() {
   log "[*] Installing OSINT tools"
 
-  # Shodan
-  pipx_user_install_or_upgrade "shodan" "shodan"
-  run "sudo -u \"$TARGET_USER\" bash -lc 'pipx runpip shodan install -U \"setuptools>=68\" \"pip>=23\" wheel || true'"
+  # Shodan (dedicated venv — bypasses Python 3.13 pipx/pkg_resources issue)
+  install_shodan_venv
 
   # Sherlock
   pipx_user_install_or_upgrade "sherlock" "git+https://github.com/sherlock-project/sherlock.git"
@@ -546,25 +723,14 @@ install_tools_from_list() {
     ensure_runtime_path_now_plus
   fi
 
-  # Metagoofil / Sublist3r
-  if ! apt_try_install metagoofil; then
-    pipx_user_install_or_upgrade "metagoofil" "git+https://github.com/opsdisk/metagoofil.git" || true
-    # explicit wrapper in case pipx didn't expose it system-wide
-    if [[ -x "${TARGET_HOME}/.local/bin/metagoofil" ]]; then
-      write_wrapper "/usr/local/bin/metagoofil" "${TARGET_HOME}/.local/bin/metagoofil"
-    else
-      log "[*] metagoofil pipx install failed; retrying with pipx install"
-      run "sudo -u \"$TARGET_USER\" bash -lc 'pipx install git+https://github.com/opsdisk/metagoofil.git || true'"
-      [[ -x "${TARGET_HOME}/.local/bin/metagoofil" ]] && write_wrapper "/usr/local/bin/metagoofil" "${TARGET_HOME}/.local/bin/metagoofil" || logerr "metagoofil install failed"
-    fi
-  fi
+  # Metagoofil (git clone + venv — pipx has no console_scripts entry point)
+  install_metagoofil
   if ! apt_try_install sublist3r; then
     pipx_user_install_or_upgrade "sublist3r" "git+https://github.com/aboul3la/Sublist3r.git"
   fi
 
-  # theHarvester
-  pipx_user_install_or_upgrade "theHarvester" "theHarvester" || true
-  [[ -x "${TARGET_HOME}/.local/bin/theHarvester" ]] && write_wrapper "/usr/local/bin/theHarvester" "${TARGET_HOME}/.local/bin/theHarvester"
+  # theHarvester (dedicated venv — correct entry point via PyPI)
+  install_theharvester
 
   # h8mail
   pipx_user_install_or_upgrade "h8mail" "h8mail" || true
@@ -580,9 +746,37 @@ install_tools_from_list() {
   pipx_user_install_or_upgrade "onionsearch" "onionsearch" || true
   [[ -x "${TARGET_HOME}/.local/bin/onionsearch" ]] && write_wrapper "/usr/local/bin/onionsearch" "${TARGET_HOME}/.local/bin/onionsearch"
 
-  # Photon
-  pipx_user_install_or_upgrade "photon" "git+https://github.com/s0md3v/Photon.git" || true
-  [[ -x "${TARGET_HOME}/.local/bin/photon" ]] && write_wrapper "/usr/local/bin/photon" "${TARGET_HOME}/.local/bin/photon"
+  # Photon (git clone + venv — no pyproject.toml, pipx can't install it)
+  install_photon_from_source
+
+  # DumpsterDiver
+  install_dumpsterdiver
+
+  # Twayback
+  install_twayback
+
+  # Tiktok Scraper (npm; included per README — may be deprecated)
+  if command -v npm >/dev/null 2>&1; then
+    run "${SUDO} npm install -g tiktok-scraper" || logerr "tiktok-scraper install failed (tool may be deprecated)"
+  fi
+
+  # Maltego (ARM64 not available — amd64-only)
+  install_maltego
+
+  # Infoga (unmaintained — included per README)
+  install_infoga
+
+  # Little Brother (archived — included per README)
+  install_little_brother
+
+  # Twint (archived — included per README)
+  install_twint
+
+  # Stweet (archived — included per README)
+  install_stweet
+
+  # Joplin (note-taking AppImage)
+  install_joplin
 
   # Stego tools (all confirmed available on Trixie ARM64)
   apt_try_install stegosuite || log "[*] StegOSuite not available; skipping."
@@ -904,7 +1098,17 @@ validator() {
   has domainfy && ok "osrframework present (domainfy: $(command -v domainfy))" || warn "osrframework not found"
   has onionsearch && ok "onionsearch present" || warn "onionsearch not found"
   has photon && ok "photon present" || warn "photon not found"
+  has DumpsterDiver && ok "DumpsterDiver present" || warn "DumpsterDiver not found"
+  has twayback && ok "twayback present" || warn "twayback not found"
+  has tiktok-scraper && ok "tiktok-scraper present" || warn "tiktok-scraper not found (tool may be deprecated)"
+  warn "Maltego not available for ARM64 (amd64-only) — check https://www.maltego.com/downloads/"
+  has infoga && ok "infoga present" || warn "infoga not found (unmaintained)"
+  has littlebrother && ok "Little Brother present" || warn "Little Brother not found (archived)"
+  has twint && ok "twint present" || warn "twint not found (archived)"
+  has stweet && ok "stweet present" || warn "stweet not found (archived)"
+  has joplin && ok "Joplin present: $(command -v joplin)" || warn "Joplin not found"
   show_ver exiftool -ver || true
+  has exifprobe && ok "exifprobe present" || warn "exifprobe not found"
   show_ver steghide --version || true
   show_ver stegseek --version || true
   show_ver tor --version || true
