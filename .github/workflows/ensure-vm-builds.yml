@@ -73,6 +73,7 @@ jobs:
       - name: Run VM build in container
         run: |
           set -euo pipefail
+          mkdir -p "$(pwd)/images"
           docker run --rm \
           --user "$(id -u):$(id -g)" \
           --net host \
